@@ -1,3 +1,5 @@
+from typing import NamedTuple
+
 from anthropic import AsyncAnthropic
 
 from app.config import settings
@@ -10,6 +12,13 @@ MAX_DIFF_CHARS = 60_000
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 
+class ReviewOutcome(NamedTuple):
+    review: Review
+    tokens_in: int
+    tokens_out: int
+    model: str
+
+
 async def review_pr(
     diff: str,
     repo: str,
@@ -17,7 +26,9 @@ async def review_pr(
     title: str,
     author: str,
     context: list[str] | None = None,
-) -> Review:
+    extra_instructions: str | None = None,
+    system_override: str | None = None,
+) -> ReviewOutcome:
     if len(diff) > MAX_DIFF_CHARS:
         diff = diff[:MAX_DIFF_CHARS] + f"\n\n... (truncated, original diff was {len(diff)} chars)"
 
@@ -36,17 +47,31 @@ async def review_pr(
         diff=diff,
     )
 
+    system_prompt = system_override or SYSTEM
+    if extra_instructions:
+        system_prompt = system_prompt + f"\n\nAdditional guidance from this repository:\n{extra_instructions}"
+
     r = await _client.messages.create(
         model=settings.review_model,
         max_tokens=4000,
-        system=SYSTEM,
+        system=system_prompt,
         tools=[tool],
         tool_choice={"type": "tool", "name": "submit_review"},
         messages=[{"role": "user", "content": user}],
     )
 
+    review = None
     for block in r.content:
         if block.type == "tool_use":
-            return Review.model_validate(block.input)
+            review = Review.model_validate(block.input)
+            break
 
-    raise RuntimeError("model did not call submit_review")
+    if review is None:
+        raise RuntimeError("model did not call submit_review")
+
+    return ReviewOutcome(
+        review=review,
+        tokens_in=r.usage.input_tokens,
+        tokens_out=r.usage.output_tokens,
+        model=r.model,
+    )

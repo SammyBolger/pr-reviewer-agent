@@ -1,8 +1,10 @@
 import chromadb
 from chromadb.utils import embedding_functions
 
+from app.config import settings
+
 _embedder = embedding_functions.DefaultEmbeddingFunction()
-_client = chromadb.EphemeralClient()
+_client = chromadb.PersistentClient(path=str(settings.chroma_path))
 _collections: dict[str, object] = {}
 
 
@@ -13,8 +15,18 @@ def _slug(name: str) -> str:
 def get_or_create_collection(name: str):
     slug = _slug(name)
     if slug not in _collections:
-        _collections[slug] = _client.create_collection(name=slug, embedding_function=_embedder)
+        _collections[slug] = _client.get_or_create_collection(name=slug, embedding_function=_embedder)
     return _collections[slug]
+
+
+def reset_collection(name: str) -> None:
+    slug = _slug(name)
+    if slug in _collections:
+        del _collections[slug]
+    try:
+        _client.delete_collection(name=slug)
+    except Exception:
+        pass
 
 
 def add(collection, chunks: list[dict]) -> None:
