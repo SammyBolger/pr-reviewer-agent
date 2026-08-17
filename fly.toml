@@ -21,10 +21,6 @@ primary_region = "ord"
   source = "prreviewer_data"
   destination = "/app/data"
 
-[[mounts]]
-  source = "prreviewer_chroma"
-  destination = "/app/.chroma"
-
 [[vm]]
   memory = "512mb"
   cpu_kind = "shared"

@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     review_model: str = "claude-haiku-4-5"
 
     database_url: str = "sqlite:///./data/reviews.db"
-    chroma_path: Path = Path("./.chroma")
+    # Chroma persistence lives inside the data dir so hosted deploys can use
+    # a single mounted volume for both sqlite and vector storage.
+    chroma_path: Path = Path("./data/chroma")
 
     # If set, /dashboard requires a Bearer <this-token>. If empty, /dashboard
     # is unauthenticated (dev only — do not deploy without setting this).

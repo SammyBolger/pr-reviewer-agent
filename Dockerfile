@@ -36,7 +36,7 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app app ./app
 
-RUN mkdir -p /app/data /app/.chroma && chown -R app:app /app
+RUN mkdir -p /app/data/chroma && chown -R app:app /app
 
 USER app
 
