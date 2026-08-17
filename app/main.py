@@ -38,7 +38,8 @@ def health():
 
 
 @app.get("/dashboard")
-async def dashboard():
+async def dashboard(request: Request):
+    _require_dashboard_auth(request)
     async with SessionLocal() as session:
         stats = await session.execute(
             select(
@@ -142,6 +143,20 @@ async def _safe_run_review(payload: dict) -> None:
         await run_review(payload)
     except Exception:
         log.exception("review failed")
+
+
+def _require_dashboard_auth(request: Request) -> None:
+    expected = settings.dashboard_token
+    if not expected:
+        # Explicitly refuse to serve the dashboard when no token is configured.
+        # Set DASHBOARD_TOKEN in production to enable it.
+        raise HTTPException(status_code=404, detail="not found")
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    presented = header[len("Bearer "):]
+    if not hmac.compare_digest(presented, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def verify_signature(body: bytes, signature_header: str) -> bool:
