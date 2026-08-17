@@ -32,3 +32,5 @@ uvicorn app.main:app --reload --port 8000
 ## Stack
 
 Python, FastAPI, LangGraph, Anthropic Claude, Chroma, PostgreSQL, deployed on Fly.io.
+
+<!-- trigger a review -->
