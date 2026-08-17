@@ -8,6 +8,9 @@ class Settings(BaseSettings):
 
     github_app_id: str = ""
     github_app_private_key_path: Path = Path("./secrets/github-app.pem")
+    # Contents of the PEM, used in hosted environments instead of a file on disk.
+    # Env var wins over the file if both are set.
+    github_app_private_key: str = ""
     github_webhook_secret: str = ""
 
     anthropic_api_key: str = ""
