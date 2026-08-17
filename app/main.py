@@ -52,6 +52,20 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
 
+@app.get("/")
+def root():
+    return {
+        "app": "pr-reviewer-agent",
+        "description": "Agentic GitHub App that reviews pull requests using LangGraph, RAG, and Anthropic Claude.",
+        "source": "https://github.com/SammyBolger/pr-reviewer-agent",
+        "endpoints": {
+            "webhook": "POST /webhook",
+            "health": "GET /health",
+            "dashboard": "GET /dashboard (requires Bearer auth)",
+        },
+    }
+
+
 @app.get("/health")
 def health():
     return {"ok": True}
