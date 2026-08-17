@@ -9,15 +9,15 @@ from app.review.schemas import Review
 
 
 async def _one(case) -> tuple[Review, Judgement]:
-    review = await review_pr(
+    outcome = await review_pr(
         diff=case.diff,
         repo="local/eval",
         number=0,
         title=case.title,
         author="eval-runner",
     )
-    j = await judge(case, review)
-    return review, j
+    j = await judge(case, outcome.review)
+    return outcome.review, j
 
 
 def _row(name: str, r: Review, j: Judgement) -> str:

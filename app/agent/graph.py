@@ -4,12 +4,15 @@ from langgraph.graph import END, StateGraph
 
 from app.agent.state import ReviewState
 from app.config_repo import RepoConfig, all_paths_skipped, diff_line_count, load_repo_config
+from app.db.models import ReviewRecord
+from app.db.session import SessionLocal
 from app.github.auth import installation_token
 from app.github.client import fetch_diff, post_comment
 from app.llm.client import review_pr
 from app.retrieval.indexer import fetch_repo_docs, to_chunks
 from app.retrieval.store import add, collection_size, get_or_create_collection, query
 from app.review.calibrator import compute_confidence
+from app.review.cost import estimate_cost_usd
 from app.review.formatter import to_markdown
 
 log = logging.getLogger("pr-reviewer.agent")
@@ -111,7 +114,7 @@ def _changed_files(diff: str) -> list[str]:
 async def review(state: ReviewState) -> dict:
     cfg: RepoConfig = state.get("repo_config") or RepoConfig()
 
-    r = await review_pr(
+    outcome = await review_pr(
         diff=state["diff"],
         repo=state["repo"],
         number=state["number"],
@@ -120,22 +123,45 @@ async def review(state: ReviewState) -> dict:
         context=state.get("context") or [],
         extra_instructions=cfg.extra_instructions,
     )
+    r = outcome.review
 
     model_confidence = r.confidence
     calibrated, signals = compute_confidence(r, state["diff"], state.get("context") or [])
     r.confidence = calibrated
 
+    cost = estimate_cost_usd(outcome.model, outcome.tokens_in, outcome.tokens_out)
+
     log.info(
-        "confidence calibration for %s#%s: model=%.2f -> calibrated=%.2f (%s)",
+        "review %s#%s: model=%.2f->%.2f tokens=%d+%d cost=$%.4f",
         state["repo"], state["number"], model_confidence, calibrated,
-        ", ".join(f"{k}={v:.2f}" for k, v in signals.items()),
+        outcome.tokens_in, outcome.tokens_out, cost,
     )
+
+    await _save_record(state, r, outcome, cost)
 
     return {
         "review": r,
         "comment_body": to_markdown(r, signals=signals),
         "confidence_signals": signals,
     }
+
+
+async def _save_record(state: ReviewState, r, outcome, cost: float) -> None:
+    try:
+        async with SessionLocal() as session:
+            session.add(ReviewRecord(
+                repo=state["repo"],
+                pr_number=state["number"],
+                model=outcome.model,
+                tokens_in=outcome.tokens_in,
+                tokens_out=outcome.tokens_out,
+                cost_usd=cost,
+                confidence=r.confidence,
+                num_concerns=len(r.concerns),
+            ))
+            await session.commit()
+    except Exception:
+        log.exception("failed to save review record (non-fatal)")
 
 
 async def post(state: ReviewState) -> dict:

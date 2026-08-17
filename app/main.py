@@ -1,26 +1,84 @@
 import hashlib
 import hmac
 import logging
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from sqlalchemy import desc, func, select
 
 from app.config import settings
+from app.db.models import ReviewRecord
+from app.db.session import SessionLocal, init_db
 from app.github.auth import installation_token
 from app.review.runner import run_review
 
 logging.basicConfig(level=settings.log_level.upper())
 log = logging.getLogger("pr-reviewer")
 
-app = FastAPI(title="pr-reviewer-agent")
-
 REVIEW_ACTIONS = {"opened", "synchronize", "reopened"}
 SLASH_COMMANDS = ("/review-again", "/review")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await init_db()
+    except Exception:
+        log.exception("db init failed, continuing without persistence")
+    yield
+
+
+app = FastAPI(title="pr-reviewer-agent", lifespan=lifespan)
 
 
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/dashboard")
+async def dashboard():
+    async with SessionLocal() as session:
+        stats = await session.execute(
+            select(
+                func.count(ReviewRecord.id),
+                func.sum(ReviewRecord.tokens_in),
+                func.sum(ReviewRecord.tokens_out),
+                func.sum(ReviewRecord.cost_usd),
+                func.avg(ReviewRecord.confidence),
+            )
+        )
+        total, ti, to, cost, avg_conf = stats.one()
+
+        recent = await session.execute(
+            select(ReviewRecord).order_by(desc(ReviewRecord.created_at)).limit(20)
+        )
+        rows = recent.scalars().all()
+
+    return {
+        "totals": {
+            "reviews": total or 0,
+            "tokens_in": ti or 0,
+            "tokens_out": to or 0,
+            "cost_usd": round(cost or 0.0, 4),
+            "avg_confidence": round(avg_conf or 0.0, 2),
+        },
+        "recent": [
+            {
+                "repo": r.repo,
+                "pr": r.pr_number,
+                "model": r.model,
+                "tokens_in": r.tokens_in,
+                "tokens_out": r.tokens_out,
+                "cost_usd": round(r.cost_usd, 4),
+                "confidence": round(r.confidence, 2),
+                "num_concerns": r.num_concerns,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in rows
+        ],
+    }
 
 
 @app.post("/webhook")
