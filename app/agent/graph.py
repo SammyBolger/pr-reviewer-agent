@@ -8,10 +8,10 @@ from app.db.models import ReviewRecord
 from app.db.session import SessionLocal
 from app.github.auth import installation_token
 from app.github.client import fetch_diff, post_comment
-from app.llm.client import review_pr
 from app.retrieval.indexer import fetch_repo_docs, to_chunks
 from app.retrieval.store import add, collection_size, get_or_create_collection, query
 from app.review.calibrator import compute_confidence
+from app.review.chunking import review_pr_maybe_chunked
 from app.review.cost import estimate_cost_usd
 from app.review.formatter import to_markdown
 
@@ -114,7 +114,7 @@ def _changed_files(diff: str) -> list[str]:
 async def review(state: ReviewState) -> dict:
     cfg: RepoConfig = state.get("repo_config") or RepoConfig()
 
-    outcome = await review_pr(
+    outcome = await review_pr_maybe_chunked(
         diff=state["diff"],
         repo=state["repo"],
         number=state["number"],
