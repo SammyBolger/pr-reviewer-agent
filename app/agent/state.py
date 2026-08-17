@@ -18,3 +18,4 @@ class ReviewState(TypedDict, total=False):
 
     review: Review
     comment_body: str
+    confidence_signals: dict[str, float]

@@ -4,7 +4,7 @@ from app.review.schemas import Review
 SEVERITY_EMOJI = {"low": "🟢", "medium": "🟡", "high": "🔴"}
 
 
-def to_markdown(review: Review) -> str:
+def to_markdown(review: Review, signals: dict[str, float] | None = None) -> str:
     lines = [
         "## PR Reviewer Agent",
         "",
@@ -35,4 +35,7 @@ def to_markdown(review: Review) -> str:
         lines.append("")
 
     lines.append(f"_Confidence: {review.confidence:.2f}_")
+    if signals:
+        breakdown = ", ".join(f"{k} {v:.2f}" for k, v in signals.items())
+        lines.append(f"_Signals: {breakdown}_")
     return "\n".join(lines)
