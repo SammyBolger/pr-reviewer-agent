@@ -8,6 +8,7 @@ from app.github.client import fetch_diff, post_comment
 from app.llm.client import review_pr
 from app.retrieval.indexer import fetch_repo_docs, to_chunks
 from app.retrieval.store import add, collection_size, get_or_create_collection, query
+from app.review.calibrator import compute_confidence
 from app.review.formatter import to_markdown
 
 log = logging.getLogger("pr-reviewer.agent")
@@ -87,7 +88,22 @@ async def review(state: ReviewState) -> dict:
         author=state["author"],
         context=state.get("context") or [],
     )
-    return {"review": r, "comment_body": to_markdown(r)}
+
+    model_confidence = r.confidence
+    calibrated, signals = compute_confidence(r, state["diff"], state.get("context") or [])
+    r.confidence = calibrated
+
+    log.info(
+        "confidence calibration for %s#%s: model=%.2f -> calibrated=%.2f (%s)",
+        state["repo"], state["number"], model_confidence, calibrated,
+        ", ".join(f"{k}={v:.2f}" for k, v in signals.items()),
+    )
+
+    return {
+        "review": r,
+        "comment_body": to_markdown(r, signals=signals),
+        "confidence_signals": signals,
+    }
 
 
 async def post(state: ReviewState) -> dict:
