@@ -3,13 +3,13 @@ from app.review.schemas import Concern, Review
 
 
 def _review(**overrides):
-    defaults = dict(
-        summary="one line",
-        changes=["did a thing"],
-        concerns=[],
-        strengths=[],
-        confidence=0.8,
-    )
+    defaults = {
+        "summary": "one line",
+        "changes": ["did a thing"],
+        "concerns": [],
+        "strengths": [],
+        "confidence": 0.8,
+    }
     defaults.update(overrides)
     return Review(**defaults)
 

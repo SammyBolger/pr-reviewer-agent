@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,10 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./data/reviews.db"
     chroma_path: Path = Path("./.chroma")
+
+    # If set, /dashboard requires a Bearer <this-token>. If empty, /dashboard
+    # is unauthenticated (dev only — do not deploy without setting this).
+    dashboard_token: str = ""
 
     port: int = 8000
     log_level: str = "info"

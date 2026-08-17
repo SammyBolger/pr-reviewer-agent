@@ -3,7 +3,6 @@ import hmac
 
 from app.main import verify_signature
 
-
 SECRET = "test-secret"
 
 

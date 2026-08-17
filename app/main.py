@@ -5,12 +5,16 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import desc, func, select
 
 from app.config import settings
 from app.db.models import ReviewRecord
 from app.db.session import SessionLocal, init_db
 from app.github.auth import installation_token
+from app.middleware import BodySizeLimitMiddleware
 from app.review.runner import run_review
 
 logging.basicConfig(level=settings.log_level.upper())
@@ -19,6 +23,14 @@ log = logging.getLogger("pr-reviewer")
 REVIEW_ACTIONS = {"opened", "synchronize", "reopened"}
 SLASH_COMMANDS = ("/review-again", "/review")
 
+# 2 MB is more than enough for any GitHub webhook payload we care about.
+MAX_REQUEST_BYTES = 2 * 1024 * 1024
+
+# Default limit is intentionally tight. Endpoints that need more (like /webhook)
+# override with their own decorator. This keeps unauthenticated endpoints
+# defensively rate-limited even in the event of misconfiguration.
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,10 +38,18 @@ async def lifespan(app: FastAPI):
         await init_db()
     except Exception:
         log.exception("db init failed, continuing without persistence")
+    if not settings.dashboard_token:
+        log.warning(
+            "DASHBOARD_TOKEN is unset. /dashboard will return 404 to every request. "
+            "Set DASHBOARD_TOKEN to a long random string to enable it."
+        )
     yield
 
 
 app = FastAPI(title="pr-reviewer-agent", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
 
 @app.get("/health")
@@ -38,7 +58,9 @@ def health():
 
 
 @app.get("/dashboard")
-async def dashboard():
+@limiter.limit("30/minute")
+async def dashboard(request: Request):
+    _require_dashboard_auth(request)
     async with SessionLocal() as session:
         stats = await session.execute(
             select(
@@ -82,10 +104,17 @@ async def dashboard():
 
 
 @app.post("/webhook")
+@limiter.limit("300/minute")
 async def webhook(request: Request, background: BackgroundTasks):
     body = await request.body()
-    signature = request.headers.get("X-Hub-Signature-256", "")
 
+    # Defense in depth: the BodySizeLimitMiddleware already enforces this, but
+    # if the middleware is ever removed or a bug lets a huge body through, we
+    # still refuse to process it here.
+    if len(body) > MAX_REQUEST_BYTES:
+        raise HTTPException(status_code=413, detail="request body too large")
+
+    signature = request.headers.get("X-Hub-Signature-256", "")
     if not verify_signature(body, signature):
         raise HTTPException(status_code=401, detail="bad signature")
 
@@ -94,10 +123,12 @@ async def webhook(request: Request, background: BackgroundTasks):
 
     if event == "pull_request" and payload.get("action") in REVIEW_ACTIONS:
         background.add_task(_safe_run_review, payload)
-
-    elif event == "issue_comment" and payload.get("action") == "created":
-        if _is_slash_command(payload):
-            background.add_task(_run_slash_command, payload)
+    elif (
+        event == "issue_comment"
+        and payload.get("action") == "created"
+        and _is_slash_command(payload)
+    ):
+        background.add_task(_run_slash_command, payload)
 
     return {"received": True}
 
@@ -142,6 +173,20 @@ async def _safe_run_review(payload: dict) -> None:
         await run_review(payload)
     except Exception:
         log.exception("review failed")
+
+
+def _require_dashboard_auth(request: Request) -> None:
+    expected = settings.dashboard_token
+    if not expected:
+        # Explicitly refuse to serve the dashboard when no token is configured.
+        # Set DASHBOARD_TOKEN in production to enable it.
+        raise HTTPException(status_code=404, detail="not found")
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    presented = header[len("Bearer "):]
+    if not hmac.compare_digest(presented, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def verify_signature(body: bytes, signature_header: str) -> bool:

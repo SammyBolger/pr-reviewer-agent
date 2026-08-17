@@ -1,6 +1,5 @@
 from app.review.schemas import Review
 
-
 SEVERITY_EMOJI = {"low": "🟢", "medium": "🟡", "high": "🔴"}
 
 

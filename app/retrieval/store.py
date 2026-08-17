@@ -1,7 +1,11 @@
+import logging
+
 import chromadb
 from chromadb.utils import embedding_functions
 
 from app.config import settings
+
+log = logging.getLogger("pr-reviewer.retrieval.store")
 
 _embedder = embedding_functions.DefaultEmbeddingFunction()
 _client = chromadb.PersistentClient(path=str(settings.chroma_path))
@@ -21,12 +25,11 @@ def get_or_create_collection(name: str):
 
 def reset_collection(name: str) -> None:
     slug = _slug(name)
-    if slug in _collections:
-        del _collections[slug]
+    _collections.pop(slug, None)
     try:
         _client.delete_collection(name=slug)
-    except Exception:
-        pass
+    except (ValueError, KeyError) as e:
+        log.debug("delete_collection(%s) skipped: %s", slug, e)
 
 
 def add(collection, chunks: list[dict]) -> None:
