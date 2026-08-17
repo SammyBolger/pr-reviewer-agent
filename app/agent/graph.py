@@ -1,10 +1,18 @@
+import logging
+
 from langgraph.graph import END, StateGraph
 
 from app.agent.state import ReviewState
 from app.github.auth import installation_token
 from app.github.client import fetch_diff, post_comment
 from app.llm.client import review_pr
+from app.retrieval.indexer import fetch_repo_docs, to_chunks
+from app.retrieval.store import add, new_collection, query
 from app.review.formatter import to_markdown
+
+log = logging.getLogger("pr-reviewer.agent")
+
+TOP_K = 5
 
 
 async def extract(state: ReviewState) -> dict:
@@ -30,8 +38,23 @@ async def fetch(state: ReviewState) -> dict:
 
 
 async def retrieve(state: ReviewState) -> dict:
-    # RAG goes here in the next step; for now no-op returning an empty context list.
-    return {"context": []}
+    try:
+        docs = await fetch_repo_docs(state["repo"], state["token"])
+        if not docs:
+            return {"context": []}
+
+        collection = new_collection()
+        add(collection, to_chunks(docs))
+
+        query_text = f"{state['title']}\n\n{state['diff'][:1500]}"
+        hits = query(collection, query_text, k=TOP_K)
+
+        context = [f"[from {h['meta']['path']}]\n{h['text']}" for h in hits]
+        log.info("retrieved %d context chunks for %s#%s", len(context), state["repo"], state["number"])
+        return {"context": context}
+    except Exception:
+        log.exception("retrieval failed, continuing without context")
+        return {"context": []}
 
 
 async def review(state: ReviewState) -> dict:
@@ -41,6 +64,7 @@ async def review(state: ReviewState) -> dict:
         number=state["number"],
         title=state["title"],
         author=state["author"],
+        context=state.get("context") or [],
     )
     return {"review": r, "comment_body": to_markdown(r)}
 
