@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     review_model: str = "claude-haiku-4-5"
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/pr_reviewer"
+    database_url: str = "sqlite:///./data/reviews.db"
+    chroma_path: Path = Path("./.chroma")
 
     port: int = 8000
     log_level: str = "info"

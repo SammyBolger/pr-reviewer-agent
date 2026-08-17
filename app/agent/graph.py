@@ -3,6 +3,7 @@ import logging
 from langgraph.graph import END, StateGraph
 
 from app.agent.state import ReviewState
+from app.config_repo import RepoConfig, all_paths_skipped, diff_line_count, load_repo_config
 from app.github.auth import installation_token
 from app.github.client import fetch_diff, post_comment
 from app.llm.client import review_pr
@@ -33,9 +34,37 @@ async def authenticate(state: ReviewState) -> dict:
     return {"token": token}
 
 
+async def load_config(state: ReviewState) -> dict:
+    cfg = await load_repo_config(state["repo"], state["token"])
+    return {"repo_config": cfg}
+
+
 async def fetch(state: ReviewState) -> dict:
     diff = await fetch_diff(state["repo"], state["number"], state["token"])
-    return {"diff": diff}
+    cfg: RepoConfig = state.get("repo_config") or RepoConfig()
+
+    files = _changed_files(diff)
+    if cfg.skip_paths and all_paths_skipped(files, cfg.skip_paths):
+        return {"diff": diff, "skip_reason": f"all changed files match skip_paths: {cfg.skip_paths}"}
+
+    if cfg.min_diff_lines > 0:
+        lines = diff_line_count(diff)
+        if lines < cfg.min_diff_lines:
+            return {"diff": diff, "skip_reason": f"diff has {lines} lines, below min_diff_lines={cfg.min_diff_lines}"}
+
+    return {"diff": diff, "skip_reason": None}
+
+
+def _after_fetch(state: ReviewState) -> str:
+    return "skip" if state.get("skip_reason") else "retrieve"
+
+
+async def skip(state: ReviewState) -> dict:
+    log.info(
+        "skipping review for %s#%s: %s",
+        state["repo"], state["number"], state.get("skip_reason"),
+    )
+    return {}
 
 
 async def retrieve(state: ReviewState) -> dict:
@@ -80,6 +109,8 @@ def _changed_files(diff: str) -> list[str]:
 
 
 async def review(state: ReviewState) -> dict:
+    cfg: RepoConfig = state.get("repo_config") or RepoConfig()
+
     r = await review_pr(
         diff=state["diff"],
         repo=state["repo"],
@@ -87,6 +118,7 @@ async def review(state: ReviewState) -> dict:
         title=state["title"],
         author=state["author"],
         context=state.get("context") or [],
+        extra_instructions=cfg.extra_instructions,
     )
 
     model_confidence = r.confidence
@@ -115,15 +147,19 @@ def build_graph():
     g = StateGraph(ReviewState)
     g.add_node("extract", extract)
     g.add_node("authenticate", authenticate)
+    g.add_node("load_config", load_config)
     g.add_node("fetch", fetch)
+    g.add_node("skip", skip)
     g.add_node("retrieve", retrieve)
     g.add_node("review", review)
     g.add_node("post", post)
 
     g.set_entry_point("extract")
     g.add_edge("extract", "authenticate")
-    g.add_edge("authenticate", "fetch")
-    g.add_edge("fetch", "retrieve")
+    g.add_edge("authenticate", "load_config")
+    g.add_edge("load_config", "fetch")
+    g.add_conditional_edges("fetch", _after_fetch, {"skip": "skip", "retrieve": "retrieve"})
+    g.add_edge("skip", END)
     g.add_edge("retrieve", "review")
     g.add_edge("review", "post")
     g.add_edge("post", END)
