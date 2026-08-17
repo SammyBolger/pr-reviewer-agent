@@ -5,12 +5,16 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy import desc, func, select
 
 from app.config import settings
 from app.db.models import ReviewRecord
 from app.db.session import SessionLocal, init_db
 from app.github.auth import installation_token
+from app.middleware import BodySizeLimitMiddleware
 from app.review.runner import run_review
 
 logging.basicConfig(level=settings.log_level.upper())
@@ -18,6 +22,11 @@ log = logging.getLogger("pr-reviewer")
 
 REVIEW_ACTIONS = {"opened", "synchronize", "reopened"}
 SLASH_COMMANDS = ("/review-again", "/review")
+
+# 2 MB is more than enough for any GitHub webhook payload we care about.
+MAX_REQUEST_BYTES = 2 * 1024 * 1024
+
+limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 
 
 @asynccontextmanager
@@ -30,6 +39,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="pr-reviewer-agent", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
 
 @app.get("/health")
@@ -38,6 +50,7 @@ def health():
 
 
 @app.get("/dashboard")
+@limiter.limit("30/minute")
 async def dashboard(request: Request):
     _require_dashboard_auth(request)
     async with SessionLocal() as session:
@@ -83,6 +96,7 @@ async def dashboard(request: Request):
 
 
 @app.post("/webhook")
+@limiter.limit("300/minute")
 async def webhook(request: Request, background: BackgroundTasks):
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
