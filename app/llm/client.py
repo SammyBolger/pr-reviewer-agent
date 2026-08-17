@@ -27,6 +27,7 @@ async def review_pr(
     author: str,
     context: list[str] | None = None,
     extra_instructions: str | None = None,
+    system_override: str | None = None,
 ) -> ReviewOutcome:
     if len(diff) > MAX_DIFF_CHARS:
         diff = diff[:MAX_DIFF_CHARS] + f"\n\n... (truncated, original diff was {len(diff)} chars)"
@@ -46,9 +47,9 @@ async def review_pr(
         diff=diff,
     )
 
-    system_prompt = SYSTEM
+    system_prompt = system_override or SYSTEM
     if extra_instructions:
-        system_prompt = SYSTEM + f"\n\nAdditional guidance from this repository:\n{extra_instructions}"
+        system_prompt = system_prompt + f"\n\nAdditional guidance from this repository:\n{extra_instructions}"
 
     r = await _client.messages.create(
         model=settings.review_model,

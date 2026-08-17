@@ -1,0 +1,31 @@
+app = "pr-reviewer-agent"
+primary_region = "ord"
+
+[build]
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "get"
+    timeout = "5s"
+    path = "/health"
+
+[[mounts]]
+  source = "prreviewer_data"
+  destination = "/app/data"
+
+[[mounts]]
+  source = "prreviewer_chroma"
+  destination = "/app/.chroma"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
