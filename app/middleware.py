@@ -26,10 +26,10 @@ class BodySizeLimitMiddleware:
         if content_length is not None:
             try:
                 if int(content_length) > self.max_bytes:
-                    await self._reject(send, f"request body too large (>{self.max_bytes} bytes)")
+                    await self._reject(scope, send, f"request body too large (>{self.max_bytes} bytes)")
                     return
             except ValueError:
-                await self._reject(send, "invalid content-length header", status=400)
+                await self._reject(scope, send, "invalid content-length header", status=400)
                 return
 
         buffered = b""
@@ -44,7 +44,7 @@ class BodySizeLimitMiddleware:
             buffered += chunk
             more_body = message.get("more_body", False)
             if len(buffered) > self.max_bytes:
-                await self._reject(send, f"request body too large (>{self.max_bytes} bytes)")
+                await self._reject(scope, send, f"request body too large (>{self.max_bytes} bytes)")
                 return
 
         await self.app(scope, self._replay(buffered), send)
@@ -61,9 +61,13 @@ class BodySizeLimitMiddleware:
 
         return receive
 
-    async def _reject(self, send: Send, detail: str, status: int = 413) -> None:
+    async def _reject(self, scope: Scope, send: Send, detail: str, status: int = 413) -> None:
+        # Reuse the real request scope so the response is emitted against the
+        # correct HTTP version, headers accumulator, and client info. Starlette's
+        # JSONResponse only reads a small handful of fields, but passing the real
+        # scope is the safe thing to do.
         response = JSONResponse({"detail": detail}, status_code=status)
-        await response({"type": "http", "method": "POST", "headers": []}, self._noop_receive, send)
+        await response(scope, self._noop_receive, send)
 
     @staticmethod
     async def _noop_receive() -> Message:
