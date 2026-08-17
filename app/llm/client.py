@@ -1,7 +1,7 @@
 from anthropic import AsyncAnthropic
 
 from app.config import settings
-from app.llm.prompts import SYSTEM, USER_TEMPLATE
+from app.llm.prompts import SYSTEM, USER_TEMPLATE, render_context
 from app.review.schemas import Review
 
 
@@ -10,7 +10,14 @@ MAX_DIFF_CHARS = 60_000
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
 
-async def review_pr(diff: str, repo: str, number: int, title: str, author: str) -> Review:
+async def review_pr(
+    diff: str,
+    repo: str,
+    number: int,
+    title: str,
+    author: str,
+    context: list[str] | None = None,
+) -> Review:
     if len(diff) > MAX_DIFF_CHARS:
         diff = diff[:MAX_DIFF_CHARS] + f"\n\n... (truncated, original diff was {len(diff)} chars)"
 
@@ -20,7 +27,14 @@ async def review_pr(diff: str, repo: str, number: int, title: str, author: str) 
         "input_schema": Review.model_json_schema(),
     }
 
-    user = USER_TEMPLATE.format(repo=repo, number=number, title=title, author=author, diff=diff)
+    user = USER_TEMPLATE.format(
+        repo=repo,
+        number=number,
+        title=title,
+        author=author,
+        context_block=render_context(context or []),
+        diff=diff,
+    )
 
     r = await _client.messages.create(
         model=settings.review_model,
