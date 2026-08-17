@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-
 Severity = Literal["low", "medium", "high"]
 Category = Literal["bug", "style", "security", "performance", "clarity", "test"]
 

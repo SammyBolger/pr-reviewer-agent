@@ -6,7 +6,6 @@ from app.config import settings
 from app.llm.prompts import SYSTEM, USER_TEMPLATE, render_context
 from app.review.schemas import Review
 
-
 MAX_DIFF_CHARS = 60_000
 
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)

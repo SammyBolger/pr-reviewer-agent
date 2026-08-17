@@ -1,5 +1,4 @@
 import time
-from functools import lru_cache
 
 import httpx
 import jwt

@@ -1,7 +1,6 @@
 from app.llm.client import MAX_DIFF_CHARS
 from app.review.schemas import Review
 
-
 WEIGHTS = {
     "citation": 0.40,
     "completeness": 0.20,

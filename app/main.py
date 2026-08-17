@@ -104,8 +104,14 @@ async def dashboard(request: Request):
 @limiter.limit("300/minute")
 async def webhook(request: Request, background: BackgroundTasks):
     body = await request.body()
-    signature = request.headers.get("X-Hub-Signature-256", "")
 
+    # Defense in depth: the BodySizeLimitMiddleware already enforces this, but
+    # if the middleware is ever removed or a bug lets a huge body through, we
+    # still refuse to process it here.
+    if len(body) > MAX_REQUEST_BYTES:
+        raise HTTPException(status_code=413, detail="request body too large")
+
+    signature = request.headers.get("X-Hub-Signature-256", "")
     if not verify_signature(body, signature):
         raise HTTPException(status_code=401, detail="bad signature")
 
@@ -114,10 +120,12 @@ async def webhook(request: Request, background: BackgroundTasks):
 
     if event == "pull_request" and payload.get("action") in REVIEW_ACTIONS:
         background.add_task(_safe_run_review, payload)
-
-    elif event == "issue_comment" and payload.get("action") == "created":
-        if _is_slash_command(payload):
-            background.add_task(_run_slash_command, payload)
+    elif (
+        event == "issue_comment"
+        and payload.get("action") == "created"
+        and _is_slash_command(payload)
+    ):
+        background.add_task(_run_slash_command, payload)
 
     return {"received": True}
 

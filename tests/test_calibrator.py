@@ -7,7 +7,6 @@ from app.review.calibrator import (
 )
 from app.review.schemas import Concern, Review
 
-
 DIFF = """diff --git a/app/foo.py b/app/foo.py
 + hello
 diff --git a/README.md b/README.md

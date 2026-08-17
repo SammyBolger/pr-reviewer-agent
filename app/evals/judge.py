@@ -5,7 +5,6 @@ from app.evals.dataset import TestCase
 from app.evals.schemas import Judgement
 from app.review.schemas import Review
 
-
 JUDGE_MODEL = "claude-sonnet-4-6"
 
 _client = AsyncAnthropic(api_key=settings.anthropic_api_key)

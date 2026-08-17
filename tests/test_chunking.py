@@ -1,7 +1,6 @@
 from app.review.chunking import aggregate_reviews, chunk_file_diffs, split_diff_by_file
 from app.review.schemas import Concern, Review
 
-
 TWO_FILE_DIFF = """diff --git a/a.py b/a.py
 --- a/a.py
 +++ b/a.py

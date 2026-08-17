@@ -1,4 +1,5 @@
 import base64
+import binascii
 import logging
 
 import httpx
@@ -55,7 +56,7 @@ async def _fetch_file(client: httpx.AsyncClient, repo: str, path: str, headers: 
         return None
     try:
         text = base64.b64decode(data["content"]).decode("utf-8", errors="ignore")
-    except Exception:
+    except (ValueError, binascii.Error):
         return None
     return {"id": path, "text": text, "meta": {"path": path}}
 

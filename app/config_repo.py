@@ -67,9 +67,7 @@ def all_paths_skipped(changed_files: list[str], skip_patterns: list[str]) -> boo
 def diff_line_count(diff: str) -> int:
     count = 0
     for line in diff.splitlines():
-        if line.startswith("+") and not line.startswith("+++"):
-            count += 1
-        elif line.startswith("-") and not line.startswith("---"):
+        if line.startswith("+") and not line.startswith("+++") or line.startswith("-") and not line.startswith("---"):
             count += 1
     return count
 
