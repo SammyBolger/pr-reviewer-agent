@@ -2,11 +2,19 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 _embedder = embedding_functions.DefaultEmbeddingFunction()
+_client = chromadb.EphemeralClient()
+_collections: dict[str, object] = {}
 
 
-def new_collection(name: str = "repo-context"):
-    client = chromadb.EphemeralClient()
-    return client.create_collection(name=name, embedding_function=_embedder)
+def _slug(name: str) -> str:
+    return name.replace("/", "-").replace(" ", "-")
+
+
+def get_or_create_collection(name: str):
+    slug = _slug(name)
+    if slug not in _collections:
+        _collections[slug] = _client.create_collection(name=slug, embedding_function=_embedder)
+    return _collections[slug]
 
 
 def add(collection, chunks: list[dict]) -> None:
@@ -28,3 +36,7 @@ def query(collection, text: str, k: int = 5) -> list[dict]:
             "meta": r["metadatas"][0][i],
         })
     return hits
+
+
+def collection_size(collection) -> int:
+    return collection.count()

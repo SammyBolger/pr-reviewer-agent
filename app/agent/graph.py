@@ -7,7 +7,7 @@ from app.github.auth import installation_token
 from app.github.client import fetch_diff, post_comment
 from app.llm.client import review_pr
 from app.retrieval.indexer import fetch_repo_docs, to_chunks
-from app.retrieval.store import add, new_collection, query
+from app.retrieval.store import add, collection_size, get_or_create_collection, query
 from app.review.formatter import to_markdown
 
 log = logging.getLogger("pr-reviewer.agent")
@@ -39,22 +39,43 @@ async def fetch(state: ReviewState) -> dict:
 
 async def retrieve(state: ReviewState) -> dict:
     try:
-        docs = await fetch_repo_docs(state["repo"], state["token"])
-        if not docs:
-            return {"context": []}
+        collection = get_or_create_collection(state["repo"])
+        if collection_size(collection) == 0:
+            docs = await fetch_repo_docs(state["repo"], state["token"])
+            if not docs:
+                return {"context": []}
+            add(collection, to_chunks(docs))
 
-        collection = new_collection()
-        add(collection, to_chunks(docs))
-
-        query_text = f"{state['title']}\n\n{state['diff'][:1500]}"
+        query_text = _build_query(state["title"], state["diff"])
         hits = query(collection, query_text, k=TOP_K)
 
         context = [f"[from {h['meta']['path']}]\n{h['text']}" for h in hits]
-        log.info("retrieved %d context chunks for %s#%s", len(context), state["repo"], state["number"])
+        log.info(
+            "retrieved %d context chunks for %s#%s",
+            len(context), state["repo"], state["number"],
+        )
         return {"context": context}
     except Exception:
         log.exception("retrieval failed, continuing without context")
         return {"context": []}
+
+
+def _build_query(title: str, diff: str) -> str:
+    files = _changed_files(diff)
+    if not files:
+        return title
+    file_list = "\n".join(f"- {f}" for f in files[:20])
+    return f"{title}\n\nChanged files:\n{file_list}"
+
+
+def _changed_files(diff: str) -> list[str]:
+    seen: dict[str, None] = {}
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split()
+            if len(parts) >= 4 and parts[3].startswith("b/"):
+                seen[parts[3][2:]] = None
+    return list(seen.keys())
 
 
 async def review(state: ReviewState) -> dict:
