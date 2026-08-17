@@ -26,7 +26,10 @@ SLASH_COMMANDS = ("/review-again", "/review")
 # 2 MB is more than enough for any GitHub webhook payload we care about.
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
+# Default limit is intentionally tight. Endpoints that need more (like /webhook)
+# override with their own decorator. This keeps unauthenticated endpoints
+# defensively rate-limited even in the event of misconfiguration.
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 
 
 @asynccontextmanager

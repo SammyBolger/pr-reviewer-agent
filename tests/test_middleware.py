@@ -124,6 +124,64 @@ async def test_asgi_middleware_stops_chunked_uploads_over_limit_without_calling_
 
 
 @pytest.mark.asyncio
+async def test_asgi_middleware_handles_disconnect_during_streaming():
+    forwarded: list[bool] = []
+
+    async def tracking_app(scope, receive, send):
+        forwarded.append(True)
+        # Drain what we can from the wrapped receive
+        while True:
+            m = await receive()
+            if m["type"] == "http.disconnect":
+                break
+            if not m.get("more_body", False):
+                break
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    mw = BodySizeLimitMiddleware(app=tracking_app, max_bytes=1024)
+    sent: list = []
+    send = await _collect(sent)
+
+    call_count = 0
+
+    async def receive():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {"type": "http.request", "body": b"x" * 200, "more_body": True}
+        return {"type": "http.disconnect"}
+
+    await mw(_scope_chunked(), receive, send)
+
+    # Middleware saw a disconnect, forwarded partial body to the app for cleanup
+    assert forwarded, "app should have been given a chance to see the disconnect"
+
+
+@pytest.mark.asyncio
+async def test_asgi_middleware_rejects_malformed_content_length():
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/webhook",
+        "headers": [
+            (b"content-length", b"not-a-number"),
+        ],
+    }
+    mw = BodySizeLimitMiddleware(app=_crash_app, max_bytes=1024)
+    sent: list = []
+    send = await _collect(sent)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    await mw(scope, receive, send)
+
+    statuses = [m for m in sent if m["type"] == "http.response.start"]
+    assert statuses and statuses[0]["status"] == 400
+
+
+@pytest.mark.asyncio
 async def test_asgi_middleware_forwards_valid_body_to_app():
     seen_bodies: list[bytes] = []
 
