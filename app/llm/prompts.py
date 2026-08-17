@@ -9,13 +9,27 @@ Rules for the review:
 - Only raise concerns you can point to specific lines or files for.
 - Prefer fewer, higher-signal concerns over many low-signal ones.
 - Set confidence honestly. If you cannot see enough of the file to be sure, lower it.
+- If repository context is provided, use it to ground your suggestions in the project's actual conventions.
 """
+
+
+CONTEXT_HEADER = (
+    "Relevant context retrieved from the repository (for grounding, not all snippets may be relevant):"
+)
+
 
 USER_TEMPLATE = """Repository: {repo}
 PR #{number}: {title}
 Author: {author}
-
+{context_block}
 Diff (unified format):
 
 {diff}
 """
+
+
+def render_context(chunks: list[str]) -> str:
+    if not chunks:
+        return ""
+    blocks = "\n\n".join(f"---\n{c}" for c in chunks)
+    return f"\n{CONTEXT_HEADER}\n{blocks}\n"
