@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.local
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+*.log
+
+# local sqlite / dev db
+*.db
+*.sqlite
+
+# chroma persistence
+.chroma/
+data/
+
+# github app private key + any local secrets
+secrets/
+*.pem
