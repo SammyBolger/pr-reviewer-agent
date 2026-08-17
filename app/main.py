@@ -35,6 +35,11 @@ async def lifespan(app: FastAPI):
         await init_db()
     except Exception:
         log.exception("db init failed, continuing without persistence")
+    if not settings.dashboard_token:
+        log.warning(
+            "DASHBOARD_TOKEN is unset. /dashboard will return 404 to every request. "
+            "Set DASHBOARD_TOKEN to a long random string to enable it."
+        )
     yield
 
 
