@@ -24,6 +24,8 @@ primary_region = "ord"
   destination = "/app/data"
 
 [[vm]]
-  memory = "512mb"
+  # 1 GB is needed because Chroma's default embedder (all-MiniLM-L6-v2)
+  # loads ~250 MB into RAM on first review. 512 MB caused OOM.
+  memory = "1gb"
   cpu_kind = "shared"
   cpus = 1
