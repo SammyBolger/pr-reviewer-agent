@@ -223,3 +223,5 @@ CI runs `ruff check` and `pytest` on every pull request and every push to `main`
 ## License
 
 [MIT](LICENSE)
+
+<!-- verify live bot works after deploy -->
