@@ -66,31 +66,42 @@ Browse more real reviews on the [pull requests page](https://github.com/SammyBol
 ## Architecture
 
 ```mermaid
-flowchart TB
-    User(["Architect / Engineer"])
-    UI["Generator UI"]
-    Retrieval["BM25 Retrieval"]
-    Assembly["Prompt Assembly + Pattern Template"]
-    LLM["LLM (Claude Haiku 4.5)"]
-    KB[("Chroma Knowledge Base<br/>indexed per repo")]
-    ReviewUI["Submit for Review"]
-    Reviewer(["Senior Architect"])
-    Decision{"Approved?"}
+flowchart LR
+    subgraph GitHub["GitHub"]
+        direction TB
+        Event["PR opened or updated<br/>· /review-again comment"]
+        RestAPI[("REST API<br/>diff · docs · comments")]
+    end
 
-    User -->|scenario| UI
-    UI --> Retrieval
-    KB --> Retrieval
-    Retrieval --> Assembly
-    Assembly --> LLM
-    LLM -->|draft + sources + checks| UI
-    UI -->|submit for review| ReviewUI
-    ReviewUI --> Reviewer
-    Reviewer --> Decision
-    Decision -->|Yes| KB
-    Decision -->|No, edit and resubmit| User
+    subgraph FlyApp["Fly.io · pr-reviewer-agent"]
+        Webhook["POST /webhook<br/>HMAC signature verify"]
+
+        subgraph Agent["LangGraph state machine"]
+            direction TB
+            S1[extract] --> S2[authenticate] --> S3[load config]
+            S3 --> S4[fetch diff] --> S5[retrieve context]
+            S5 --> S6[review + calibrate] --> S7[post comment]
+        end
+
+        Chroma[("Chroma<br/>per-repo vector index")]
+        SQLite[("SQLite<br/>reviews, tokens, cost")]
+    end
+
+    Anth["Anthropic API<br/>Claude Haiku 4.5"]
+
+    Event -->|webhook| Webhook
+    Webhook --> S1
+    S2 <-->|install token| RestAPI
+    S3 <-->|read .reviewbot.yml| RestAPI
+    S4 <-->|GET pull diff| RestAPI
+    S5 <-->|embeddings| Chroma
+    S5 -.->|first review only| RestAPI
+    S6 <-->|prompt + structured tool use| Anth
+    S6 -->|log usage| SQLite
+    S7 -->|POST review comment| RestAPI
 ```
 
-When a webhook arrives, the LangGraph state machine runs six nodes in order. `extract` pulls PR metadata off the payload. `authenticate` mints a GitHub App installation token. `load_config` fetches an optional `.reviewbot.yml` from the target repo. `fetch` pulls the diff and applies skip rules. `retrieve` looks up related repo context via the Chroma index (building it on first review of a repo). `review` calls Claude with the diff plus retrieved context, computes the calibrated confidence from real signals, and formats the result as Markdown. `post` writes the comment to the PR.
+**How a review happens end to end.** GitHub fires a webhook when a PR is opened or updated (or when someone comments `/review-again`). The Fly-hosted FastAPI service verifies the HMAC signature and hands the payload to a background task, which invokes the LangGraph state machine. The agent walks seven nodes in order: `extract` pulls PR metadata off the payload, `authenticate` mints a GitHub App installation token, `load_config` fetches the optional `.reviewbot.yml` from the target repo, `fetch` pulls the diff and applies any skip rules (huge PRs or `docs/` only changes short-circuit here), `retrieve` queries a per-repo Chroma vector index for related context (indexing the repo's docs on the first review of that repo), `review` calls Claude with the diff plus retrieved context, calibrates the model's confidence against real signals (citation validity, diff completeness, RAG hit count, model self-report), and formats the response as Markdown, and `post` writes the comment on the PR. Every call is logged to SQLite with token counts and estimated cost so the dashboard can report per-repo spend over time.
 
 ## Project Structure
 
