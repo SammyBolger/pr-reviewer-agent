@@ -111,10 +111,13 @@ docker compose up --build
 
 ## Usage
 
-1. Install the GitHub App on any repo you want reviews on.
-2. Open a pull request. That's it. The bot posts a review within 20 seconds.
-3. If you want a fresh review, comment `/review-again` on the PR.
-4. Want to customize behavior on a specific repo? Drop a `.reviewbot.yml` at the repo root:
+The live deployment at [pr-reviewer-agent.fly.dev](https://pr-reviewer-agent.fly.dev) is locked to my own GitHub account. **You cannot install my hosted App on your own repos.** If you want the bot to review your PRs, fork this repo and stand up your own instance. See [SETUP.md](SETUP.md) for the full walkthrough (about 15 minutes, roughly $5-9/month to run).
+
+Once your instance is up:
+
+1. Open a pull request. The bot posts a review within 20 seconds.
+2. Comment `/review-again` on any PR to force a fresh review.
+3. Customize per repo with a `.reviewbot.yml` at the repo root:
    ```yaml
    skip_paths:
      - "docs/**"
