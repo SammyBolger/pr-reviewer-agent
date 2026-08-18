@@ -1,140 +1,90 @@
 # pr-reviewer-agent
 
-*A GitHub App that reviews pull requests using an LLM agent, RAG over repo history, and signal-derived confidence scoring.*
+*A GitHub App I built that leaves an automatic code review on every pull request within about 20 seconds.*
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SammyBolger/pr-reviewer-agent/ci.yml?branch=main&label=ci)](https://github.com/SammyBolger/pr-reviewer-agent/actions/workflows/ci.yml)
 [![Fly Deploy](https://img.shields.io/github/actions/workflow/status/SammyBolger/pr-reviewer-agent/fly-deploy.yml?branch=main&label=fly%20deploy)](https://github.com/SammyBolger/pr-reviewer-agent/actions/workflows/fly-deploy.yml)
 [![License](https://img.shields.io/github/license/SammyBolger/pr-reviewer-agent)](LICENSE)
 
-Install it on any repository and every pull request gets an automated code review comment within about 20 seconds. The review is grounded in the repo's own docs and shows the sources the model used, so the reader can tell whether to trust it. Deployed live and running on Fly.
-
-**Live:** https://pr-reviewer-agent.fly.dev
+Install the App on a repo, open a PR, and a bot comment shows up before you can grab a coffee. The review is grounded in the repo's own docs and shows the sources it used, so you can tell whether to trust it. It runs live at [pr-reviewer-agent.fly.dev](https://pr-reviewer-agent.fly.dev).
 
 ---
 
-## Overview
+## Why I built this
 
-Engineers wait hours or days for a human review on a PR. This app cuts the first-pass review down to seconds by running the diff through a LangGraph agent that retrieves related repository context, calls Claude with structured output, and posts a Markdown review comment on the PR. It is a working, deployed product that reviews its own PRs.
+Waiting hours or days for a first review on a PR is the biggest slowdown on personal projects. I wanted something that read the diff the second I opened the PR, told me what looked off, and pointed at the specific lines. I also wanted it to be honest about what it wasn't sure about, which is why I built the confidence score around real signals instead of asking the LLM to guess.
 
 ## Features
 
-- Auto-reviews every opened or updated pull request with a structured Markdown comment
-- Grounds every review in a per-repo Chroma RAG index built from the project's own docs
-- Structured LLM output via Anthropic tool use, validated against a Pydantic schema
-- Signal-derived confidence (citation validity, diff completeness, RAG strength, model self-report) instead of the model's flat 0.75 self-report
-- LLM-as-judge eval harness with a labeled dataset and a prompt A/B framework across three system-prompt variants
-- MCP server exposing review stats to Claude Desktop or any MCP client
-- `.reviewbot.yml` per-repo config for skip paths, min diff size, and repo-specific instructions
-- `/review-again` slash command to re-trigger a review from a PR comment
-- Token and cost tracking in SQLite with a `/dashboard` endpoint
-- Diff chunking (map-reduce) for pull requests too large for a single LLM call
+- Reviews every PR automatically the moment it opens or updates
+- Pulls in relevant repo docs so the reviewer knows the project's own conventions
+- Structured Markdown output (summary, changes, concerns with severity, strengths, confidence)
+- Real confidence score, not a made-up one
+- LLM-as-judge eval harness with three test cases and a prompt A/B runner
+- `.reviewbot.yml` per-repo config for skipping paths or adding custom guidance
+- `/review-again` slash command to re-run a review from a PR comment
+- Token and cost tracking so you can see what each review costs
+- MCP server so you can query review history from Claude Desktop
+- Handles huge PRs by splitting them into chunks and merging the reviews
 
-## Screenshots / Demo
+## Screenshots
 
-A real review the bot posted on one of its own pull requests:
+Here's a real review the bot posted on one of its own PRs:
 
 > ## PR Reviewer Agent
 >
-> **Summary.** Refactors review flow into a LangGraph state machine with a linear DAG.
+> **Summary.** Refactors review flow into a LangGraph state machine.
 >
 > **Concerns**
-> - 🟡 **clarity** in `app/agent/state.py`: `ReviewState` uses `TypedDict(total=False)`, making all fields optional. This weakens type safety since nodes assume fields exist.
-> - 🟡 **bug** in `app/review/runner.py`:16: The logging statement assumes the review operation succeeded, but is called before checking if `result` contains a `'review'` key.
+> - 🟡 **clarity** in `app/agent/state.py`: `ReviewState` uses `TypedDict(total=False)` so all fields are optional, but nodes assume they exist.
+> - 🟡 **bug** in `app/review/runner.py`:16: logs before checking that `result` actually has a `review` key.
 >
 > **Nice work**
-> - Clean separation of concerns: each node has a single responsibility.
+> - Clean separation of concerns: each node has one job.
 >
 > _Confidence: 0.88_
 > _Signals: citation 1.00, completeness 1.00, context 0.60, model 0.75_
 
-Browse more real reviews on the [pull requests page](https://github.com/SammyBolger/pr-reviewer-agent/pulls?q=is%3Apr).
+More reviews on the [pull requests page](https://github.com/SammyBolger/pr-reviewer-agent/pulls?q=is%3Apr).
 
 ## Tech Stack
 
-- **FastAPI on Python 3.11**: webhook receiver and dashboard HTTP server
-- **LangGraph**: orchestrates the review flow as a 6-node state machine (extract to authenticate to load_config to fetch to retrieve to review to post)
-- **Anthropic Claude Haiku 4.5**: the reviewer model, chosen over Sonnet for cost on high-frequency reviews
-- **Anthropic Claude Sonnet 4.6**: the LLM-as-judge used only inside the eval harness where quality matters more than latency
-- **Chroma (persistent)**: vector store, one collection per repo, keyed by repo slug
-- **BM25**: keyword-based retrieval, chosen over dense embeddings because the indexed doc set is small
-- **SQLAlchemy 2.0 + SQLite + aiosqlite**: review history and cost tracking
-- **slowapi**: rate limiting (60/min default, 300/min on `/webhook`, 30/min on `/dashboard`)
-- **MCP SDK**: exposes reviewer stats as an MCP server that plugs into Claude Desktop
-- **GitHub Apps SDK** (via `pyjwt` + `httpx`): App-level JWT and installation tokens
-- **Fly.io** with a multi-stage Docker build, deployed automatically via GitHub Actions
+- **Python 3.11 + FastAPI** for the webhook receiver
+- **LangGraph** to orchestrate the review pipeline
+- **Anthropic Claude Haiku 4.5** as the reviewer (cheap, fast)
+- **Anthropic Claude Sonnet 4.6** as the judge in the eval harness
+- **Chroma** for the per-repo vector store
+- **SQLAlchemy + SQLite** for cost and review history
+- **Fly.io** for hosting, multi-stage Docker, auto-deployed via GitHub Actions
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph GitHub["GitHub"]
-        direction TB
-        Event["PR opened or updated<br/>· /review-again comment"]
-        RestAPI[("REST API<br/>diff · docs · comments")]
-    end
+    GH[GitHub]
+    App[FastAPI app on Fly.io]
+    Chroma[(Chroma<br/>vector store)]
+    SQL[(SQLite<br/>cost + history)]
+    Claude[Anthropic Claude]
 
-    subgraph FlyApp["Fly.io · pr-reviewer-agent"]
-        Webhook["POST /webhook<br/>HMAC signature verify"]
-
-        subgraph Agent["LangGraph state machine"]
-            direction TB
-            S1[extract] --> S2[authenticate] --> S3[load config]
-            S3 --> S4[fetch diff] --> S5[retrieve context]
-            S5 --> S6[review + calibrate] --> S7[post comment]
-        end
-
-        Chroma[("Chroma<br/>per-repo vector index")]
-        SQLite[("SQLite<br/>reviews, tokens, cost")]
-    end
-
-    Anth["Anthropic API<br/>Claude Haiku 4.5"]
-
-    Event -->|webhook| Webhook
-    Webhook --> S1
-    S2 <-->|install token| RestAPI
-    S3 <-->|read .reviewbot.yml| RestAPI
-    S4 <-->|GET pull diff| RestAPI
-    S5 <-->|embeddings| Chroma
-    S5 -.->|first review only| RestAPI
-    S6 <-->|prompt + structured tool use| Anth
-    S6 -->|log usage| SQLite
-    S7 -->|POST review comment| RestAPI
+    GH -->|1. webhook on PR event| App
+    App -->|2. fetch diff and docs| GH
+    App <-->|3. embed and retrieve| Chroma
+    App <-->|4. ask for review| Claude
+    App -->|5. log tokens + cost| SQL
+    App -->|6. post review comment| GH
 ```
 
-**How a review happens end to end.** GitHub fires a webhook when a PR is opened or updated (or when someone comments `/review-again`). The Fly-hosted FastAPI service verifies the HMAC signature and hands the payload to a background task, which invokes the LangGraph state machine. The agent walks seven nodes in order: `extract` pulls PR metadata off the payload, `authenticate` mints a GitHub App installation token, `load_config` fetches the optional `.reviewbot.yml` from the target repo, `fetch` pulls the diff and applies any skip rules (huge PRs or `docs/` only changes short-circuit here), `retrieve` queries a per-repo Chroma vector index for related context (indexing the repo's docs on the first review of that repo), `review` calls Claude with the diff plus retrieved context, calibrates the model's confidence against real signals (citation validity, diff completeness, RAG hit count, model self-report), and formats the response as Markdown, and `post` writes the comment on the PR. Every call is logged to SQLite with token counts and estimated cost so the dashboard can report per-repo spend over time.
-
-## Project Structure
-
-```
-pr-reviewer-agent/
-├── app/
-│   ├── main.py              # FastAPI app, /webhook, /health, /dashboard, /
-│   ├── config.py            # env-driven settings (pydantic-settings)
-│   ├── config_repo.py       # per-repo .reviewbot.yml loader
-│   ├── middleware.py        # BodySizeLimitMiddleware
-│   ├── mcp_server.py        # MCP server exposing review stats
-│   ├── agent/               # LangGraph state machine + shared state
-│   ├── github/              # App auth, diff fetch, comment posting
-│   ├── llm/                 # Claude client, prompt templates
-│   ├── retrieval/           # Chroma client + repo doc indexer
-│   ├── review/              # Review schemas, formatter, calibrator, chunking
-│   ├── db/                  # SQLAlchemy models + async session
-│   └── evals/               # dataset, LLM-as-judge, prompt A/B runner
-├── tests/                   # pytest suite (66 tests)
-├── Dockerfile               # multi-stage, runs as non-root
-├── docker-compose.yml       # one-command local spinup
-├── fly.toml                 # Fly.io deployment config
-└── pyproject.toml
-```
+**Walkthrough.** GitHub sends a webhook when a PR opens. My FastAPI service checks the HMAC signature and hands the payload to a background task. The task runs a small LangGraph pipeline: fetch the diff, look up related repo docs (indexed in Chroma), ask Claude for a review, calibrate the confidence, then post a Markdown comment on the PR. Every call gets logged to SQLite so I can see what I'm spending.
 
 ## Installation & Setup
 
-**Prerequisites**
-- Python 3.11 or higher
-- A GitHub App (see [creating a GitHub App](https://docs.github.com/en/apps/creating-github-apps))
-- An Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
+**You'll need:**
+1. Python 3.11 or newer
+2. A GitHub App you own ([how to create one](https://docs.github.com/en/apps/creating-github-apps))
+3. An Anthropic API key ([get one here](https://console.anthropic.com))
 
-**Local setup**
+**Get it running locally:**
 
 ```bash
 git clone https://github.com/SammyBolger/pr-reviewer-agent.git
@@ -145,15 +95,15 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 
 cp .env.example .env
-# fill in GITHUB_APP_ID, GITHUB_WEBHOOK_SECRET, ANTHROPIC_API_KEY, DASHBOARD_TOKEN
-# and put your GitHub App private key at ./secrets/github-app.pem
+# fill in the .env values
+# drop your GitHub App private key at ./secrets/github-app.pem
 
 uvicorn app.main:app --reload --port 8000
 ```
 
-For local webhook testing, expose port 8000 with `ngrok http 8000` or `cloudflared tunnel --url http://localhost:8000` and paste that public URL into your GitHub App's Webhook URL setting.
+For local webhook testing, expose port 8000 with ngrok or Cloudflare Tunnel and use the public URL in your GitHub App's Webhook URL setting.
 
-**With Docker Compose**
+**Or just spin up Docker:**
 
 ```bash
 docker compose up --build
@@ -162,42 +112,37 @@ docker compose up --build
 ## Usage
 
 1. Install the GitHub App on any repo you want reviews on.
-2. Open a pull request. The bot posts a review comment within about 20 seconds.
-3. Comment `/review-again` on any PR to force a fresh review.
-4. Add a `.reviewbot.yml` to the repo root to customize behavior:
+2. Open a pull request. That's it. The bot posts a review within 20 seconds.
+3. If you want a fresh review, comment `/review-again` on the PR.
+4. Want to customize behavior on a specific repo? Drop a `.reviewbot.yml` at the repo root:
    ```yaml
    skip_paths:
      - "docs/**"
      - "*.md"
    min_diff_lines: 10
    extra_instructions: |
-     Focus on security-sensitive changes. Deprioritize style comments.
+     Focus on security-sensitive changes. Ignore style comments.
    ```
 
-## API Documentation
+## API
 
-| Method | Endpoint | Description | Auth |
+| Method | Endpoint | What it does | Auth |
 |---|---|---|---|
-| GET | `/` | App metadata and endpoint list | none |
-| GET | `/health` | Liveness check | none |
-| POST | `/webhook` | GitHub webhook receiver | HMAC signature |
-| GET | `/dashboard` | Review history and aggregate cost | Bearer token |
+| GET | `/` | App info | none |
+| GET | `/health` | Health check | none |
+| POST | `/webhook` | Where GitHub sends events | HMAC |
+| GET | `/dashboard` | Review history and cost | Bearer token |
 
 ## Engineering Decisions
 
-**BM25 retrieval over dense embeddings.** Dense embeddings were the default first instinct. For a small per-repo doc set (typically under 200 docs), BM25 with keyword extraction from the changed-file list gives about 90% of the retrieval quality without the embedding-model dependency, the vector-DB cost, and the ANN tuning complexity. Chroma is still used as the store because its default `all-MiniLM-L6-v2` embeddings are useful as a fallback layer, but the primary retrieval path is keyword-based.
-
-**Signal-derived confidence over LLM self-report.** Every review the model produced parked confidence at 0.75 for anything non-trivial (a well-documented mode-collapse pattern with self-reported confidence). Replaced with a weighted score of citation validity (are the concerns pointing at real files in the diff?), diff completeness (did the model see the whole diff?), context strength (did RAG return anything?), and the model's self-report as one input among four. Now confidence actually varies from ~0.4 to ~0.95 based on measurable signals.
-
-**LangGraph over hand-rolled orchestration.** The review flow could have been a single Python function. LangGraph adds ceremony but gives the flow explicit named nodes with a compiled state graph, which makes it debuggable, testable per node, and easy to add conditional branches (like the `skip` short-circuit when `.reviewbot.yml` says to skip). It also carries the 2026 agentic AI keyword weight that a plain function does not.
-
-**Claude Haiku for reviews, Sonnet for the judge.** Haiku 4.5 is about 15x cheaper per token than Sonnet 4.6 and fast enough for interactive review turnaround. The eval harness uses Sonnet because the judge's job is harder than the reviewer's, and the judge only runs during offline eval sweeps where quality matters and latency does not.
-
-**Structured output via tool use, not JSON mode.** The `submit_review` tool has a strict Pydantic-derived JSON schema. If the model returns anything off-schema, `Review.model_validate` fails and the review flow throws. This is stricter than JSON mode and catches malformed output at the boundary instead of downstream.
-
-**Multi-stage Docker + non-root user.** The runtime image is `python:3.14-slim` with only the venv copied in, no `build-essential`, no cache. The container runs as an unprivileged `app` user with no shell. The service runs behind HMAC signature verification, rate limiting (300/min on the webhook), and a body-size middleware (2 MB, enforced on the wire) so a malicious client cannot exhaust memory even without a valid Content-Length header.
-
-**Prompt-injection delimiters.** The diff and retrieved context are wrapped in `<UNTRUSTED_DIFF>` and `<UNTRUSTED_CONTEXT>` tags, and the system prompt explicitly points at those delimiters and tells the model to treat everything inside as untrusted data. This is a standard defense-in-depth pattern for LLMs that read user-controlled input.
+- **BM25 keyword retrieval over dense embeddings** because the doc set per repo is small and BM25 is cheaper and simpler.
+- **Signal-derived confidence over LLM self-report** because every model call otherwise returned 0.75 no matter what.
+- **LangGraph over a plain Python function** because named nodes are easier to debug and test in isolation.
+- **Claude Haiku 4.5 for reviews** because it's about 15x cheaper than Sonnet and fast enough.
+- **Claude Sonnet 4.6 only in the eval harness** because judging is harder than reviewing and evals run offline.
+- **Structured output via tool use, not JSON mode** because a Pydantic-validated schema catches bad output at the boundary.
+- **Multi-stage Docker with a non-root user** because the runtime image should have zero build tooling and no privileged access.
+- **Prompt-injection delimiters around diffs** because the diff is user-controlled input and I don't want it hijacking the reviewer.
 
 ## Testing
 
@@ -205,34 +150,18 @@ docker compose up --build
 pytest -q
 ```
 
-**66 tests** covering:
-- HMAC webhook signature verification
-- Body size middleware, both integration and raw-ASGI edge cases (chunked upload, malformed Content-Length, disconnect during streaming)
-- Confidence calibrator (citation validity, completeness, context strength, weighted score)
-- Markdown formatter output
-- Diff parsing and file extraction
-- Chunking (split by file, group under `MAX_DIFF_CHARS`, aggregate partial reviews)
-- Repo config parsing (`.reviewbot.yml` skip patterns, min diff line counter)
-- Slash-command recognition
-- Dashboard bearer-token auth (missing header, wrong token, correct token, 404 when unconfigured)
-- Env var loading through `pydantic-settings`
-- Cost pricing lookup
-- GitHub API client with `respx`-mocked HTTP (diff fetch, comment post, error handling)
-- Doc indexer with mocked GitHub Contents API (README + `docs/` walk)
-- Root route metadata + secret-leak regression
+**66 tests** covering webhook signature verify, the confidence calibrator, the Markdown formatter, diff parsing, chunking, repo config, slash-command detection, dashboard auth, env loading, cost math, mocked GitHub API calls, and the root route.
 
-CI runs `ruff check` and `pytest` on every pull request and every push to `main` via GitHub Actions.
+CI runs `ruff check` and `pytest` on every PR and every push to `main`.
 
 ## Limitations & Future Improvements
 
-- The Chroma index rebuilds from scratch on the first review of each repo after a container restart. On Fly's shared VM this takes about 15 seconds. A background pre-warm on startup would fix it.
-- No horizontal scaling. The persistent Chroma volume is single-writer, so scaling to multiple Fly machines would need a real vector database (Pinecone, Weaviate, pgvector) or a shared filesystem.
-- No cost budget or per-repo rate limit. A malicious install could burn through the Anthropic bill. Would add a monthly budget alert and per-installation throttling before opening the App to strangers.
-- Reviews look at code inside test-fixture files (like intentionally-buggy diffs in `app/evals/dataset.py`) as if they were production code. Adding a heuristic to weight paths lower under `tests/` or `evals/` would clean this up.
-- The prompt A/B framework runs manually. Would like to wire it into CI so prompt changes need a signed-off eval delta before merging.
+- Chroma rebuilds the repo index from scratch on the first review after a machine restart.
+- No horizontal scaling. The persistent Chroma volume is single-writer, so scaling out would need a managed vector database.
+- No hard per-repo rate limit or cost budget baked in yet.
+- The reviewer sometimes flags intentionally-buggy code inside `app/evals/dataset.py` as if it were production code.
+- The prompt A/B eval runs manually. I want it in CI so prompt changes need a signed-off eval delta.
 
 ## License
 
 [MIT](LICENSE)
-
-<!-- verify live bot works after deploy -->
